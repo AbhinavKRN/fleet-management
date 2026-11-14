@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fleet desk</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect fill='%23d6ff4a' width='16' height='16'/></svg>">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    :root { color-scheme: dark; --bg: #121610; --panel: #1c2418; --line: #31402c; --text: #e8f2e2; --muted: #93a48c; --accent: #d6ff4a; --danger: #ff6b4a; --ok: #7dffb3; }
+    * { box-sizing: border-box; }
+    body { margin: 0; height: 100vh; display: grid; grid-template-rows: auto 1fr; background: var(--bg); color: var(--text); font: 14px/1.4 Bahnschrift, "Segoe UI", sans-serif; }
+    header, .panel, .dock { background: var(--panel); }
+    header { display: flex; gap: 16px; align-items: end; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+    h1 { margin: 0; font-size: 20px; letter-spacing: 0.04em; }
+    h1 span, .muted { color: var(--muted); font-weight: 400; }
+    header form, .row { display: flex; gap: 8px; flex-wrap: wrap; }
+    header form { align-items: end; }
+    .stack { display: flex; flex-direction: column; gap: 8px; }
+    button { white-space: nowrap; }
+    main { display: grid; grid-template-columns: 320px 1fr; min-height: 0; }
+    .panel { padding: 14px; overflow: auto; border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 14px; }
+    .stage { position: relative; min-width: 0; min-height: 0; }
+    #map { height: 100%; background: #0c100b; }
+    .dock { position: absolute; z-index: 800; top: 12px; right: 12px; width: 250px; max-height: calc(100% - 28px); overflow: auto; display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: rgba(28, 36, 24, 0.94); }
+    .coords { display: grid; grid-template-columns: 1fr 1fr 64px; gap: 6px; }
+    .coords input { width: 100%; }
+    .card { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+    h2 { margin: 0; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+    label { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
+    input, select, button { font: inherit; color: var(--text); background: #10150e; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+    button { background: var(--accent); color: #17200f; border: 0; font-weight: 700; cursor: pointer; }
+    button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
+    .list { overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+    .item { display: flex; justify-content: space-between; gap: 8px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; }
+    .plate { font-family: "Cascadia Mono", ui-monospace, monospace; }
+    .sent, .failed { font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+    .sent { color: var(--ok); }
+    .failed { color: var(--danger); }
+    pre { margin: 0; overflow: auto; white-space: pre-wrap; color: var(--muted); }
+    #banner { min-height: 1.2em; }
+    .leaflet-container { background: #0c100b; font: inherit; }
+    .leaflet-tooltip.plate-tip { background: #17200f; color: #d6ff4a; border: 0; border-radius: 4px; font-family: "Cascadia Mono", ui-monospace, monospace; font-weight: 700; box-shadow: none; }
+    .leaflet-tooltip.plate-tip::before { border-top-color: #17200f; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Fleet desk <span>live vehicles</span></h1>
+      <div id="banner" class="muted"></div>
+    </div>
+    <form id="key-form">
+      <label>API key <input id="api-key" value="fleet-dev-key" autocomplete="off"></label>
+      <button class="ghost" type="submit">Check gateway</button>
+    </form>
+  </header>
+  <main>
+    <aside class="panel">
+      <form id="login-form" class="stack">
+        <h2>Sign in</h2>
+        <label>Email <input id="email" type="email" value="operator@fleet.local"></label>
+        <label>Password <input id="password" type="password" value="operator123"></label>
+        <div class="row">
+          <button type="submit">Login</button>
+          <button id="seed" class="ghost" type="button">Load demo fleet</button>
+        </div>
+      </form>
+      <form id="event-form" class="stack">
+        <h2>Report event</h2>
+        <label>Vehicle <select id="event-vehicle"></select></label>
+        <label>Event
+          <select id="event-type">
+            <option value="engine_fault">Engine fault</option>
+            <option value="low_battery">Low battery</option>
+            <option value="emergency_stop">Emergency stop</option>
+            <option value="location_update">Location update</option>
+          </select>
+        </label>
+        <button type="submit">Send telemetry</button>
+      </form>
+      <section class="card">
+        <h2>Vehicles</h2>
+        <div id="vehicle-list" class="list"></div>
+      </section>
+    </aside>
+    <section class="stage">
+      <div id="map"></div>
+      <div class="dock">
+        <form id="nearby-form" class="card">
+          <h2>Nearby</h2>
+          <div class="coords">
+            <label>Lat <input id="nearby-lat" value="37.7936"></label>
+            <label>Lng <input id="nearby-lng" value="-122.3958"></label>
+            <label>Km <input id="nearby-radius" value="2"></label>
+          </div>
+          <button type="submit">Find nearby</button>
+          <div id="nearby-list" class="list"></div>
+        </form>
+        <section class="card">
+          <h2>SMS log</h2>
+          <div id="notification-list" class="list"></div>
+        </section>
+        <section class="card">
+          <h2>Gateway</h2>
+          <pre id="gateway-log">Check gateway compares a login with and without x-api-key.</pre>
+        </section>
+      </div>
+    </section>
+  </main>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const apiKey = document.querySelector('#api-key');
+    const banner = document.querySelector('#banner');
+    const vehicleList = document.querySelector('#vehicle-list');
+    const vehicleSelect = document.querySelector('#event-vehicle');
+    const notificationList = document.querySelector('#notification-list');
+    const nearbyList = document.querySelector('#nearby-list');
+    const gatewayLog = document.querySelector('#gateway-log');
+    let token = '';
+    let vehicles = [];
+    let nearbyIds = new Set();
+    let distances = new Map();
+    const map = L.map('map').setView([37.79, -122.4], 12);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(map);
+    const markers = L.layerGroup().addTo(map);
+    let radiusCircle;
+
+    function escape(value) {
+      return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+    }
+
+    function note(text) { banner.textContent = text; }
+
+    async function call(path, { method = 'GET', body, key = true, auth = true } = {}) {
+      const headers = { accept: 'application/json' };
+      if (key && apiKey.value.trim()) headers['x-api-key'] = apiKey.value.trim();
+      if (auth && token) headers.authorization = `Bearer ${token}`;
+      if (body !== undefined) headers['content-type'] = 'application/json';
+      const response = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+      const text = await response.text();
+      let data = {};
+      if (text) data = JSON.parse(text);
+      return { response, data };
+    }
+
+    function draw() {
+      markers.clearLayers();
+      const bounds = [];
+      for (const vehicle of vehicles) {
+        if (vehicle.lat == null || vehicle.lng == null) continue;
+        const inSearch = nearbyIds.has(vehicle.id);
+        const marker = L.circleMarker([vehicle.lat, vehicle.lng], {
+          radius: inSearch ? 11 : 8,
+          color: inSearch ? '#d6ff4a' : '#d7e0d2',
+          weight: 2,
+          fillColor: inSearch ? '#d6ff4a' : '#10150e',
+          fillOpacity: 0.95,
+        }).bindPopup(`<strong>${escape(vehicle.plate)}</strong><br>${escape(vehicle.status)}`);
+        marker.bindTooltip(escape(vehicle.plate), { permanent: true, direction: 'top', className: 'plate-tip', offset: [0, -8] });
+        marker.addTo(markers);
+        if (!nearbyIds.size || inSearch) bounds.push([vehicle.lat, vehicle.lng]);
+      }
+      if (bounds.length) {
+        map.fitBounds(bounds, { paddingTopLeft: [24, 24], paddingBottomRight: [280, 24], maxZoom: 14 });
+      }
+    }
+
+    function renderVehicles() {
+      vehicleList.innerHTML = vehicles.map((vehicle) => {
+        const detail = distances.has(vehicle.id)
+          ? `${distances.get(vehicle.id)} km`
+          : (distances.size ? 'outside' : vehicle.status);
+        return `<div class="item"><span class="plate">${escape(vehicle.plate)}</span><span class="muted">${escape(detail)}</span></div>`;
+      }).join('') || '<span class="muted">No vehicles yet.</span>';
+      const current = vehicleSelect.value;
+      vehicleSelect.innerHTML = vehicles.map((vehicle) => `<option value="${vehicle.id}">${escape(vehicle.plate)}</option>`).join('');
+      if (current) vehicleSelect.value = current;
+      draw();
+    }
+
+    function renderNotes(rows) {
+      notificationList.innerHTML = rows.map((row) => `<div class="item"><span>${escape(row.message)}</span><span class="${escape(row.status)}">${escape(row.status)}</span></div>`).join('') || '<span class="muted">No SMS yet.</span>';
+    }
+
+    async function refresh() {
+      const fleet = await call('/api/maps/vehicles');
+      if (!fleet.response.ok) throw new Error(fleet.data.error || 'Could not load vehicles');
+      vehicles = fleet.data.vehicles;
+      renderVehicles();
+      const notes = await call('/api/notifications');
+      if (notes.response.ok) renderNotes(notes.data.notifications);
+    }
+
+    document.querySelector('#login-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const result = await call('/api/users/login', {
+        method: 'POST',
+        auth: false,
+        body: { email: document.querySelector('#email').value, password: document.querySelector('#password').value },
+      });
+      if (!result.response.ok) return note(result.data.error || 'Login failed');
+      token = result.data.token;
+      note(`Signed in as ${result.data.user.email} (${result.data.user.role})`);
+      await refresh();
+    });
+
+    document.querySelector('#seed').addEventListener('click', async () => {
+      const accounts = [
+        { name: 'Fleet Admin', email: 'admin@fleet.local', password: 'admin12345', role: 'admin', phone: '+15551230000' },
+        { name: 'Dispatch', email: 'dispatch@fleet.local', password: 'admin12345', role: 'admin' },
+        { name: 'Operator', email: 'operator@fleet.local', password: 'operator123', role: 'operator' },
+      ];
+      for (const account of accounts) {
+        const created = await call('/api/users/register', { method: 'POST', auth: false, body: account });
+        if (!created.response.ok && created.response.status !== 409) return note(created.data.error || 'Could not seed users');
+      }
+      const wait = await call('/api/users/login', { method: 'POST', auth: false, body: { email: 'operator@fleet.local', password: 'operator123' } });
+      if (!wait.response.ok) return note(wait.data.error || 'Login failed');
+      token = wait.data.token;
+      const existing = await call('/api/vehicles');
+      if (!existing.response.ok) return note(existing.data.error || 'Could not read vehicles');
+      if (!existing.data.vehicles.length) {
+        const fleet = [
+          { plate: 'SF-1001', make: 'Ford', model: 'Transit', address: '1 Market Street, San Francisco' },
+          { plate: 'SF-1002', make: 'Toyota', model: 'Hilux', lat: 37.79, lng: -122.4 },
+          { plate: 'SF-1900', make: 'Volvo', model: 'FH', lat: 37.9, lng: -122.4 },
+        ];
+        for (const vehicle of fleet) {
+          const created = await call('/api/vehicles', { method: 'POST', body: vehicle });
+          if (!created.response.ok) return note(created.data.error || 'Could not create vehicle');
+        }
+      }
+      note('Demo fleet loaded');
+      await refresh();
+      document.querySelector('#nearby-form').requestSubmit();
+    });
+
+    document.querySelector('#event-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const vehicle = vehicles.find((item) => String(item.id) === vehicleSelect.value);
+      if (!vehicle) return note('Load the fleet first');
+      const eventType = document.querySelector('#event-type').value;
+      const result = await call('/api/telemetry', {
+        method: 'POST',
+        body: { vehicleId: vehicle.id, lat: vehicle.lat, lng: vehicle.lng, speed: 12, battery: eventType === 'low_battery' ? 9 : 70, eventType },
+      });
+      if (!result.response.ok) return note(result.data.error || 'Telemetry failed');
+      note(`${vehicle.plate} reported ${eventType}`);
+      await refresh();
+    });
+
+    document.querySelector('#nearby-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const lat = document.querySelector('#nearby-lat').value;
+      const lng = document.querySelector('#nearby-lng').value;
+      const radiusKm = document.querySelector('#nearby-radius').value;
+      const result = await call(`/api/maps/nearby?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}&radiusKm=${encodeURIComponent(radiusKm)}`);
+      if (!result.response.ok) return note(result.data.error || 'Nearby search failed');
+      nearbyIds = new Set(result.data.vehicles.map((item) => item.id));
+      distances = new Map(result.data.vehicles.map((item) => [item.id, item.distanceKm]));
+      nearbyList.innerHTML = result.data.vehicles.map((item) => `<div class="item"><span class="plate">${escape(item.plate)}</span><span>${item.distanceKm} km</span></div>`).join('') || '<span class="muted">None inside the radius.</span>';
+      if (radiusCircle) radiusCircle.remove();
+      radiusCircle = L.circle([Number(lat), Number(lng)], { radius: Number(radiusKm) * 1000, color: '#d6ff4a', weight: 1, fillOpacity: 0.08 }).addTo(map);
+      renderVehicles();
+    });
+
+    document.querySelector('#key-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const body = JSON.stringify({ email: 'operator@fleet.local', password: 'operator123' });
+      const headers = { 'content-type': 'application/json', accept: 'application/json' };
+      const missing = await fetch('/api/users/login', { method: 'POST', headers, body });
+      const missingBody = await missing.json();
+      const present = await fetch('/api/users/login', { method: 'POST', headers: { ...headers, 'x-api-key': apiKey.value.trim() }, body });
+      const presentBody = await present.json();
+      const routed = present.ok ? 'routed to user service' : (presentBody.error || 'rejected');
+      gatewayLog.textContent = `no key    ${missing.status}  ${missingBody.error}\nwith key  ${present.status}  ${routed}`;
+    });
+  </script>
+</body>
+</html>
