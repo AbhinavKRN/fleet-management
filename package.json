@@ -1,0 +1,28 @@
+{
+  "name": "fleet-management",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/start.js",
+    "test": "node --disable-warning=ExperimentalWarning ./node_modules/mocha/bin/mocha.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "swagger-ui-express": "^5.0.1"
+  },
+  "devDependencies": {
+    "chai": "^5.2.0",
+    "mocha": "^11.1.0",
+    "supertest": "^7.1.0"
+  },
+  "mocha": {
+    "timeout": 15000,
+    "spec": "test/**/*.test.js"
+  }
+}
